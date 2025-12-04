@@ -59,48 +59,61 @@ function runMockAnalysis(latitude, longitude) {
 // POST /api/verify
 // - Accepts form-data: image (file), latitude, longitude
 // - Saves image, runs mock AI, stores result in MongoDB, returns JSON
-router.post('/verify', upload.single('image'), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res
-        .status(400)
-        .json({ success: false, message: 'Image file is required' });
+router.post('/verify', (req, res) => {
+  // First handle Multer upload and its potential errors explicitly
+  upload.single('image')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      console.error('Multer error in POST /api/verify:', uploadErr);
+      return res.status(400).json({
+        success: false,
+        message: uploadErr.message || 'Image upload failed',
+      });
     }
 
-    const { latitude, longitude } = req.body;
+    try {
+      if (!req.file) {
+        return res
+          .status(400)
+          .json({ success: false, message: 'Image file is required' });
+      }
 
-    const latNum = parseFloat(latitude);
-    const lonNum = parseFloat(longitude);
+      const { latitude, longitude } = req.body;
 
-    if (Number.isNaN(latNum) || Number.isNaN(lonNum)) {
-      return res
-        .status(400)
-        .json({ success: false, message: 'Invalid latitude or longitude' });
+      const latNum = parseFloat(latitude);
+      const lonNum = parseFloat(longitude);
+
+      if (Number.isNaN(latNum) || Number.isNaN(lonNum)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid latitude or longitude',
+        });
+      }
+
+      const aiResult = runMockAnalysis(latNum, lonNum);
+
+      const verification = new Verification({
+        imagePath: req.file.path,
+        latitude: latNum,
+        longitude: lonNum,
+        solarDetected: aiResult.solarDetected,
+        panelCount: aiResult.panelCount,
+        capacityKW: aiResult.capacityKW,
+        gpsMatch: aiResult.gpsMatch,
+        fakeScore: aiResult.fakeScore,
+        verdict: aiResult.verdict,
+      });
+
+      const saved = await verification.save();
+
+      return res.status(201).json({ success: true, data: saved });
+    } catch (err) {
+      console.error('Error in POST /api/verify:', err);
+      return res.status(500).json({
+        success: false,
+        message: err.message || 'Internal server error',
+      });
     }
-
-    const aiResult = runMockAnalysis(latNum, lonNum);
-
-    const verification = new Verification({
-      imagePath: req.file.path,
-      latitude: latNum,
-      longitude: lonNum,
-      solarDetected: aiResult.solarDetected,
-      panelCount: aiResult.panelCount,
-      capacityKW: aiResult.capacityKW,
-      gpsMatch: aiResult.gpsMatch,
-      fakeScore: aiResult.fakeScore,
-      verdict: aiResult.verdict,
-    });
-
-    const saved = await verification.save();
-
-    return res.status(201).json({ success: true, data: saved });
-  } catch (err) {
-    console.error('Error in POST /api/verify:', err);
-    return res
-      .status(500)
-      .json({ success: false, message: 'Internal server error' });
-  }
+  });
 });
 
 // GET /api/history
@@ -113,7 +126,7 @@ router.get('/history', async (req, res) => {
     console.error('Error in GET /api/history:', err);
     return res
       .status(500)
-      .json({ success: false, message: 'Internal server error' });
+      .json({ success: false, message: err.message || 'Internal server error' });
   }
 });
 
